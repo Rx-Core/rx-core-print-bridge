@@ -34,7 +34,7 @@ function setStatus(kind,text){ const el=$("status"); el.className="msg "+kind; e
 function setActions(html){ $("actions").innerHTML=html; }
 /* Read the job from the address fragment (never sent to a server), then remove it from the address bar and history entry. */
 function validJob(j){ if(!j||typeof j.zpl!=="string"||!/^\s*\^XA/.test(j.zpl)||!/\^XZ\s*$/.test(j.zpl)||j.zpl.length>60000) throw new Error("not a ZPL label"); return j; }
-function readJob(){ const h=location.hash.replace(/^#/,""); if(!h.startsWith("job=")) return null;
+function readJob(){ const h=location.hash.replace(/^#/,""); if(h==="wait"){ history.replaceState(null,"",location.pathname+location.search); return null; } if(!h.startsWith("job=")) return null;
   history.replaceState(null,"",location.pathname+location.search);
   try{ const b64=h.slice(4).replace(/-/g,"+").replace(/_/g,"/"); const json=decodeURIComponent(escape(atob(b64))); return validJob(JSON.parse(json)); }catch(e){ return {invalid:String(e.message||e)}; } }
 /* If the link arrived without the label, ask the Rx Core tab that opened this one to send it directly. */
@@ -48,7 +48,11 @@ async function bp(path,init,ms){ const tries=[];
     catch(e){ clearTimeout(t); if(e.answered) throw e; tries.push(`${base}: ${e.name==="AbortError"?"no answer":e.message}`); } }
   throw Object.assign(new Error("Could not reach Zebra Browser Print."),{tries}); }
 async function defaultPrinter(){ const t=await bp("default?type=printer",{method:"GET"}); if(!t.trim()) throw new Error("Browser Print is running but has no default printer. Open Browser Print and choose the ZD411."); return JSON.parse(t); }
-async function send(zpl){ const device=await defaultPrinter(); await bp("write",{method:"POST",body:JSON.stringify({device,data:zpl})},10000); return device; }
+/* A job may name its printer (part of the name, e.g. "ZD421") so different labels go to different printers. */
+async function pickPrinter(name){ if(!name) return defaultPrinter(); const t=await bp("available",{method:"GET"}); let list=[]; try{ const j=JSON.parse(t); list=Array.isArray(j)?j:(j.printer||[]); }catch(e){}
+  const want=String(name).toLowerCase(); const d=list.find(x=>String(x.name||"").toLowerCase().includes(want));
+  if(!d) throw new Error(`Browser Print has no printer whose name contains "${name}". Printers it can see: ${list.map(x=>x.name).join(", ")||"none"}.`); return d; }
+async function send(zpl,printer){ const device=await pickPrinter(printer); await bp("write",{method:"POST",body:JSON.stringify({device,data:zpl})},10000); return device; }
 function report(msg){ try{ if(window.opener) window.opener.postMessage({type:"rxcore-print-result",...msg},"*"); }catch(e){} }
 function explain(e){ const safari=/^((?!chrome|chromium|crios|edg|android).)*safari/i.test(navigator.userAgent);
   let t=e.message||String(e); if(e.tries) t+=" "+(safari?"Safari connects only after you trust Browser Print's local certificate (button below). ":"Check that Browser Print is running (menu bar icon) and that it allowed this site. ")+"Details: "+e.tries.join(" · ");
@@ -57,7 +61,7 @@ const helpButtons=`<a class="btn" href="https://localhost:9101/ssl_support" targ
 const TEST_ZPL="^XA^CI28^PW406^LL203^FO20,30^A0N,34,30^FDRx Core print bridge^FS^FO20,80^A0N,24,22^FDTest label^FS^FO20,115^A0N,20,18^FD"+new Date().toLocaleString()+"^FS^PQ1^XZ";
 async function run(job){
   setStatus("info","Sending to Zebra Browser Print…"); setActions("");
-  try{ const dv=await send(job.zpl); setStatus("ok",`Printed on ${dv.name||"the default printer"}.`); report({jobId:job.jobId,ok:true,printer:dv.name||""});
+  try{ const dv=await send(job.zpl,job.printer); setStatus("ok",`Printed on ${dv.name||"the default printer"}.`); report({jobId:job.jobId,ok:true,printer:dv.name||""});
     if(job.jobId){ setActions(`<button id="close" class="primary">Close this tab</button>`); $("close").onclick=()=>window.close(); setTimeout(()=>window.close(),1500); } }
   catch(e){ setStatus("err",explain(e)); report({jobId:job.jobId,ok:false,error:e.message||String(e)}); setActions(`<button id="retry" class="primary">Try again</button>${helpButtons}`); $("retry").onclick=()=>run(job); } }
 function idle(){ $("what").innerHTML="No label was sent. Open this page from Rx Core's Print button, or check the printer connection here.";
