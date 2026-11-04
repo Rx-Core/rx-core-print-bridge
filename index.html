@@ -33,11 +33,15 @@ const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&
 function setStatus(kind,text){ const el=$("status"); el.className="msg "+kind; el.textContent=text; }
 function setActions(html){ $("actions").innerHTML=html; }
 /* Read the job from the address fragment (never sent to a server), then remove it from the address bar and history entry. */
+function validJob(j){ if(!j||typeof j.zpl!=="string"||!/^\s*\^XA/.test(j.zpl)||!/\^XZ\s*$/.test(j.zpl)||j.zpl.length>60000) throw new Error("not a ZPL label"); return j; }
 function readJob(){ const h=location.hash.replace(/^#/,""); if(!h.startsWith("job=")) return null;
   history.replaceState(null,"",location.pathname+location.search);
-  try{ const b64=h.slice(4).replace(/-/g,"+").replace(/_/g,"/"); const json=decodeURIComponent(escape(atob(b64))); const j=JSON.parse(json);
-    if(typeof j.zpl!=="string"||!/^\s*\^XA/.test(j.zpl)||!/\^XZ\s*$/.test(j.zpl)||j.zpl.length>60000) throw new Error("not a ZPL label");
-    return j; }catch(e){ return {invalid:String(e.message||e)}; } }
+  try{ const b64=h.slice(4).replace(/-/g,"+").replace(/_/g,"/"); const json=decodeURIComponent(escape(atob(b64))); return validJob(JSON.parse(json)); }catch(e){ return {invalid:String(e.message||e)}; } }
+/* If the link arrived without the label, ask the Rx Core tab that opened this one to send it directly. */
+function askOpener(ms){ return new Promise(res=>{ if(!window.opener){ res(null); return; } let done=false;
+  const on=e=>{ const m=e.data; if(m&&m.type==="rxcore-print-job"){ try{ const j=validJob(m.job); done=true; window.removeEventListener("message",on); res(j); }catch(err){} } };
+  window.addEventListener("message",on); try{ window.opener.postMessage({type:"rxcore-bridge-ready"},"*"); }catch(e){}
+  setTimeout(()=>{ if(!done){ window.removeEventListener("message",on); res(null); } },ms); }); }
 async function bp(path,init,ms){ const tries=[];
   for(const base of BASES){ const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),ms||4000);
     try{ const r=await fetch(base+"/"+path,{...init,signal:ctl.signal}); clearTimeout(t); const text=await r.text(); if(!r.ok) throw Object.assign(new Error(`Browser Print answered ${r.status}: ${text.slice(0,160)}`),{answered:true}); return text; }
@@ -56,13 +60,16 @@ async function run(job){
   try{ const dv=await send(job.zpl); setStatus("ok",`Printed on ${dv.name||"the default printer"}.`); report({jobId:job.jobId,ok:true,printer:dv.name||""});
     if(job.jobId){ setActions(`<button id="close" class="primary">Close this tab</button>`); $("close").onclick=()=>window.close(); setTimeout(()=>window.close(),1500); } }
   catch(e){ setStatus("err",explain(e)); report({jobId:job.jobId,ok:false,error:e.message||String(e)}); setActions(`<button id="retry" class="primary">Try again</button>${helpButtons}`); $("retry").onclick=()=>run(job); } }
-const job=readJob();
-if(!job){ $("what").innerHTML="No label was sent. Open this page from Rx Core's Print button, or check the printer connection here.";
+function idle(){ $("what").innerHTML="No label was sent. Open this page from Rx Core's Print button, or check the printer connection here.";
   setStatus("info","Ready."); setActions(`<button id="chk">Check printer connection</button><button id="test">Print a test label</button>${helpButtons}`);
   $("chk").onclick=async()=>{ setStatus("info","Checking…"); try{ const dv=await defaultPrinter(); setStatus("ok",`Connected to ${dv.name||"the default printer"}${dv.connection?` (${dv.connection})`:""}.`); }catch(e){ setStatus("err",explain(e)); } };
   $("test").onclick=()=>run({zpl:TEST_ZPL}); }
-else if(job.invalid){ $("what").textContent="The link did not contain a valid label."; setStatus("err",job.invalid); }
-else { $("what").innerHTML=`<b>${esc(job.title||"Label")}</b>${job.copies?` · ${esc(job.copies)} label${job.copies==1?"":"s"}`:""}`; run(job); }
+function start(job){ $("what").innerHTML=`<b>${esc(job.title||"Label")}</b>${job.copies?` · ${esc(job.copies)} label${job.copies==1?"":"s"}`:""}`; run(job); }
+(async()=>{ const job=readJob();
+  if(job&&job.invalid){ $("what").textContent="The link did not contain a valid label."; setStatus("err",job.invalid); return; }
+  if(job){ start(job); return; }
+  if(window.opener){ setStatus("info","Getting the label from Rx Core…"); const j=await askOpener(3000); if(j){ start(j); return; } }
+  idle(); })();
 </script>
 </body>
 </html>
