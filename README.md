@@ -6,4 +6,5 @@ Rx Core runs inside a page that may not connect to the user's computer. When a u
 
 - No data is stored, logged or sent anywhere except to Browser Print on the local computer.
 - Opened directly (no job), it offers a connection check and a test label.
+- A label that comes in a message is accepted only from the tab that opened this page, and the result of that label goes back only to that tab's origin.
 - Published with GitHub Pages: `https://buckybadgertn.github.io/rx-core-print-bridge/`
