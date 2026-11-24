@@ -6,15 +6,15 @@
 <meta name="referrer" content="no-referrer">
 <title>Rx Core PrintNode bridge</title>
 <style>
-  :root{--ink:#14202B;--ink2:#4B5966;--line:#D6DDE4;--ok:#25704A;--okbg:#E1F2E8;--err:#B42318;--errbg:#FBE9E7;--info:#2F5F98;--infobg:#E4EDF8;--accent:#0E6A73}
-  @media (prefers-color-scheme:dark){:root{--ink:#E6EDF3;--ink2:#A9B6C2;--line:#2A3743;--okbg:#173626;--errbg:#3B1A16;--infobg:#17283D}body{background:#0F171E}}
+  :root{color-scheme:light dark;--card:#FFFFFF;--ink:#14202B;--ink2:#4B5966;--line:#D6DDE4;--ok:#25704A;--okbg:#E1F2E8;--err:#B42318;--errbg:#FBE9E7;--info:#2F5F98;--infobg:#E4EDF8;--accent:#0E6A73}
+  @media (prefers-color-scheme:dark){:root{--card:#162029;--ink:#E6EDF3;--ink2:#A9B6C2;--line:#2A3743;--okbg:#173626;--errbg:#3B1A16;--infobg:#17283D}body{background:#0F171E}}
   body{margin:0;font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:#F3F5F7}
   main{max-width:560px;margin:40px auto;padding:0 16px}
   h1{font-size:20px;margin:0 0 4px} p{margin:6px 0;color:var(--ink2)}
-  .card{background:Canvas;border:1px solid var(--line);border-radius:8px;padding:16px;margin-top:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px;margin-top:16px}
   .msg{padding:10px 12px;border-radius:6px;margin-top:12px}
   .ok{background:var(--okbg);color:var(--ok)} .err{background:var(--errbg);color:var(--err)} .info{background:var(--infobg);color:var(--info)}
-  button{display:inline-block;font:inherit;padding:7px 14px;border-radius:6px;border:1px solid var(--line);background:Canvas;color:var(--ink);cursor:pointer;margin:10px 8px 0 0}
+  button{display:inline-block;font:inherit;padding:7px 14px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer;margin:10px 8px 0 0}
   button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 </style>
 </head>
@@ -35,14 +35,19 @@ function setStatus(kind,text){ const el=$("status"); el.className="msg "+kind; e
 function setActions(html){ $("actions").innerHTML=html; }
 function validJob(j){ if(!j||typeof j.zpl!=="string"||!/^\s*\^XA/.test(j.zpl)||!/\^XZ\s*$/.test(j.zpl)||j.zpl.length>60000) throw new Error("not a ZPL label");
   if(typeof j.jobId!=="string"||!/^[A-Za-z0-9_-]{1,64}$/.test(j.jobId)) throw new Error("no job id"); if(typeof j.token!=="string"||!j.token) throw new Error("no print token"); return j; }
-/* A job comes only from the tab that opened this page, never from the address (the job carries the print token). */
-let replyOrigin=null;
-function askOpener(ms){ return new Promise(res=>{ if(!window.opener){ res(null); return; } let done=false;
-  const on=e=>{ const m=e.data; if(e.source!==window.opener||!m||m.type!=="rxcore-print-job") return;
-    try{ const j=validJob(m.job); replyOrigin=e.origin&&e.origin!=="null"?e.origin:"*"; done=true; window.removeEventListener("message",on); res(j); }catch(err){ done=true; window.removeEventListener("message",on); res({invalid:String(err.message||err)}); } };
-  window.addEventListener("message",on); try{ window.opener.postMessage({type:"rxcore-bridge-ready"},"*"); }catch(e){}
+/* The job comes by message, never from the address (it carries the print token). Rx Core opens this tab with window.open and
+   sends the job to it until this page confirms receipt, because the Claude page gives this tab no opener (owner test in Safari,
+   2026-11-24: window.opener was null). When an opener exists, only the opener may send the job. When none exists, this page
+   cannot check who sent the job: the print server then refuses each job that does not carry the right print token. */
+let replyTo=null, replyOrigin="*";
+function getJob(ms){ return new Promise(res=>{ let done=false;
+  const on=e=>{ const m=e.data; if(!m||m.type!=="rxcore-print-job"||!e.source) return; if(window.opener&&e.source!==window.opener) return;
+    done=true; window.removeEventListener("message",on); replyTo=e.source; replyOrigin=e.origin&&e.origin!=="null"?e.origin:"*";
+    try{ replyTo.postMessage({type:"rxcore-job-received",jobId:m.job&&m.job.jobId},replyOrigin); }catch(err){}
+    try{ res(validJob(m.job)); }catch(err){ res({invalid:String(err.message||err)}); } };
+  window.addEventListener("message",on); if(window.opener){ try{ window.opener.postMessage({type:"rxcore-bridge-ready"},"*"); }catch(e){} }
   setTimeout(()=>{ if(!done){ window.removeEventListener("message",on); res(null); } },ms); }); }
-function report(msg){ try{ if(window.opener&&replyOrigin) window.opener.postMessage({type:"rxcore-print-result",...msg},replyOrigin); }catch(e){} }
+function report(msg){ try{ if(replyTo) replyTo.postMessage({type:"rxcore-print-result",...msg},replyOrigin); }catch(e){} }
 async function api(method,path,token,body){ let r;
   try{ r=await fetch(ENDPOINT+path,{method,headers:{authorization:"Bearer "+token,...(body?{"content-type":"application/json"}:{})},body:body?JSON.stringify(body):undefined,cache:"no-store"}); }
   catch(e){ throw new Error("The Rx Core print server could not be reached ("+(e.message||e)+")."); }
@@ -66,9 +71,8 @@ async function run(job){
   catch(e){ setStatus("err",e.message||String(e)); report({jobId:job.jobId,ok:false,accepted:!!made,code:e.code||"",printJobId:made&&made.printJobId,error:e.message||String(e)});
     if(!made&&e.code!=="duplicate"){ setActions(`<button id="retry" class="primary">Try again</button>`); $("retry").onclick=()=>run(job); } } }
 (async()=>{ history.replaceState(null,"",location.pathname+location.search);
-  if(!window.opener){ $("what").textContent="No label was sent. Open this page from Rx Core's Print button."; setStatus("info","Ready."); return; }
-  setStatus("info","Getting the label from Rx Core…"); const job=await askOpener(5000);
-  if(!job){ $("what").textContent="No label was sent. Open this page from Rx Core's Print button."; setStatus("info","Ready."); return; }
+  setStatus("info","Getting the label from Rx Core…"); const job=await getJob(10000);
+  if(!job){ $("what").textContent="No label was sent. Open this page from Rx Core's Print button (Print with: Zebra via PrintNode)."; setStatus("info",`Ready. No job came within 10 seconds (${window.opener?"the opening tab did not send one":"this tab has no link to the tab that opened it"}).`); return; }
   if(job.invalid){ $("what").textContent="Rx Core did not send a valid label."; setStatus("err",job.invalid); return; }
   $("what").innerHTML=`<b>${esc(job.title||"Label")}</b>${job.copies?` · ${esc(job.copies)} label${job.copies==1?"":"s"}`:""}`; run(job); })();
 </script>
