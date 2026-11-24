@@ -39,7 +39,8 @@ function readJob(){ const h=location.hash.replace(/^#/,""); if(h==="wait"){ hist
   try{ const b64=h.slice(4).replace(/-/g,"+").replace(/_/g,"/"); const json=decodeURIComponent(escape(atob(b64))); return validJob(JSON.parse(json)); }catch(e){ return {invalid:String(e.message||e)}; } }
 /* If the link arrived without the label, ask the Rx Core tab that opened this one to send it directly. */
 function askOpener(ms){ return new Promise(res=>{ if(!window.opener){ res(null); return; } let done=false;
-  const on=e=>{ const m=e.data; if(m&&m.type==="rxcore-print-job"){ try{ const j=validJob(m.job); done=true; window.removeEventListener("message",on); res(j); }catch(err){} } };
+  /* Only the tab that opened this page may hand over a label, and the result goes back to that tab's origin only. */
+  const on=e=>{ const m=e.data; if(e.source!==window.opener) return; if(m&&m.type==="rxcore-print-job"){ replyOrigin=e.origin&&e.origin!=="null"?e.origin:"*"; try{ const j=validJob(m.job); done=true; window.removeEventListener("message",on); res(j); }catch(err){} } };
   window.addEventListener("message",on); try{ window.opener.postMessage({type:"rxcore-bridge-ready"},"*"); }catch(e){}
   setTimeout(()=>{ if(!done){ window.removeEventListener("message",on); res(null); } },ms); }); }
 async function bp(path,init,ms){ const tries=[];
@@ -53,7 +54,8 @@ async function pickPrinter(name){ if(!name) return defaultPrinter(); const t=awa
   const want=String(name).toLowerCase(); const d=list.find(x=>String(x.name||"").toLowerCase().includes(want));
   if(!d) throw new Error(`Browser Print has no printer whose name contains "${name}". Printers it can see: ${list.map(x=>x.name).join(", ")||"none"}.`); return d; }
 async function send(zpl,printer){ const device=await pickPrinter(printer); await bp("write",{method:"POST",body:JSON.stringify({device,data:zpl})},10000); return device; }
-function report(msg){ try{ if(window.opener) window.opener.postMessage({type:"rxcore-print-result",...msg},"*"); }catch(e){} }
+let replyOrigin="*"; /* a job from the link carries no patient information and names no origin; its result holds only the job id and printer name */
+function report(msg){ try{ if(window.opener) window.opener.postMessage({type:"rxcore-print-result",...msg},replyOrigin); }catch(e){} }
 function explain(e){ const safari=/^((?!chrome|chromium|crios|edg|android).)*safari/i.test(navigator.userAgent);
   let t=e.message||String(e); if(e.tries) t+=" "+(safari?"Safari connects only after you trust Browser Print's local certificate (button below). ":"Check that Browser Print is running (menu bar icon) and that it allowed this site. ")+"Details: "+e.tries.join(" · ");
   return t; }
