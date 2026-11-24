@@ -27,7 +27,7 @@
 <script>
 "use strict";
 /* The Rx Core print server (AWS Lambda function URL). It holds the PrintNode API key; this page never sees it. */
-const ENDPOINT="https://REPLACE-AFTER-DEPLOY.lambda-url.us-east-2.on.aws";
+const ENDPOINT="https://jgkjcvhhbxav2fydc25srd5ivi0oatnp.lambda-url.us-east-2.on.aws";
 const POLL_MS=1500, POLL_LIMIT_MS=20000;
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
