@@ -58,7 +58,8 @@ function explain(e){ const safari=/^((?!chrome|chromium|crios|edg|android).)*saf
   let t=e.message||String(e); if(e.tries) t+=" "+(safari?"Safari connects only after you trust Browser Print's local certificate (button below). ":"Check that Browser Print is running (menu bar icon) and that it allowed this site. ")+"Details: "+e.tries.join(" · ");
   return t; }
 const helpButtons=`<a class="btn" href="https://localhost:9101/ssl_support" target="_blank" rel="noopener">Trust Browser Print certificate</a>`;
-const TEST_ZPL="^XA^CI28^PW406^LL203^FO20,30^A0N,34,30^FDRx Core print bridge^FS^FO20,80^A0N,24,22^FDTest label^FS^FO20,115^A0N,20,18^FD"+new Date().toLocaleString()+"^FS^PQ1^XZ";
+/* ^PON: the printer keeps the last print direction it received until it is turned off (Zebra ZPL guide, ^PO), so the test label sets normal. */
+const TEST_ZPL="^XA^CI28^PW406^LL203^PON^FO20,30^A0N,34,30^FDRx Core print bridge^FS^FO20,80^A0N,24,22^FDTest label^FS^FO20,115^A0N,20,18^FD"+new Date().toLocaleString()+"^FS^PQ1^XZ";
 async function run(job){
   setStatus("info","Sending to Zebra Browser Print…"); setActions("");
   try{ const dv=await send(job.zpl,job.printer); setStatus("ok",`Printed on ${dv.name||"the default printer"}.`); report({jobId:job.jobId,ok:true,printer:dv.name||""});
